@@ -64,58 +64,13 @@ Extractor.prototype.updateRepo = async function () {
 
     for (const type of metadataTypes) {
         if (type.config.name !== 'organisationUnits') {
-            this.currentMetadataName = type.config.name;
-
-            // Get local repository lastUpdated dates
-            const configPath = this.workingDir.name + path.sep + '.updater' + path.sep + type.config.name + '.json';
-            fs.ensureFileSync(configPath);
-            const repositoryState = fs.readJsonSync(configPath, {throws: false}) || [];
-
-            // Query the API for server lastUpdated dates
             const modelElements = await type.model.list({
                 paging: false,
                 fields: ['id', 'lastUpdated']
             });
-            const serverState = modelElements.toArray().map(e => _.pick(e, ['id', 'lastUpdated']));
-
-            // Build list of added, deleted and updated elements
-            const commonElements = _.intersectionBy(serverState, repositoryState, 'id');
-            const addedElements = _.differenceBy(serverState, repositoryState, 'id').map(e => e.id);
-            const deletedElements = _.differenceBy(repositoryState, serverState, 'id').map(e => e.id);
-            const changedElements = _.differenceWith(commonElements, repositoryState, _.isEqual).map(e => e.id);
-
-            // Logger messages
-            logger.info('[METADATA] ' + type.config.name + ' Common: ' + commonElements.length + ' elements');
-            logger.info('[METADATA] ' + type.config.name + ' Added: ' + addedElements);
-            logger.info('[METADATA] ' + type.config.name + ' Deleted: ' + deletedElements);
-            logger.info('[METADATA] ' + type.config.name + ' Changed: ' + changedElements);
-
-            // Update local repository lastUpdated dates
-            fs.writeJsonSync(configPath, serverState, {spaces: 4});
-
-            // Query server for added elements
-            await this.fetchModel(type.config, addedElements, (response) => {
-                if (response[type.config.name]) response[type.config.name].forEach(object => {
-                    this.writeToDisk(object, {...type.config, displayName: type.model.displayName});
-                    this.remoteServerAction('POST', type.config.name, object);
-                });
-            });
-
-            // Query server for deleted elements
-            for (const deletedElement of deletedElements) {
-                const files = find.fileSync(new RegExp(deletedElement + '.json'), this.workingDir.name);
-                if (files.length === 0) logger.error('[IO] Element ' + deletedElement + ' not found in disk.');
-                files.forEach(file => fs.removeSync(file));
-                this.remoteServerAction('DELETE', type.config.name, deletedElement);
-            }
-
-            // Query server for changed elements
-            await this.fetchModel(type.config, changedElements, (response) => {
-                if (response[type.config.name]) response[type.config.name].forEach(object => {
-                    this.writeToDisk(object, {...type.config, displayName: type.model.displayName});
-                    this.remoteServerAction('PUT', type.config.name, object);
-                });
-            });
+            await this.commonSync(type, modelElements);
+        } else {
+            // TODO: Finish organisationUnits
         }
     }
 
@@ -136,6 +91,59 @@ Extractor.prototype.updateRepo = async function () {
     await remote.push(['HEAD:refs/heads/' + this.ruleConfig.repoBranch], buildFetchOpts(this.ruleConfig));
 
     this.extractionFinished = true;
+};
+
+Extractor.prototype.commonSync = async function (type, modelElements, storeInRepository = true) {
+    this.currentMetadataName = type.config.name;
+
+    // Get local repository lastUpdated dates
+    const configPath = this.workingDir.name + path.sep + '.updater' + path.sep + type.config.name + '.json';
+    fs.ensureFileSync(configPath);
+    const repositoryState = fs.readJsonSync(configPath, {throws: false}) || [];
+
+    // Query the API for server lastUpdated dates
+    const serverState = modelElements.toArray().map(e => _.pick(e, ['id', 'lastUpdated']));
+
+    // Build list of added, deleted and updated elements
+    const commonElements = _.intersectionBy(serverState, repositoryState, 'id');
+    const addedElements = _.differenceBy(serverState, repositoryState, 'id').map(e => e.id);
+    const deletedElements = _.differenceBy(repositoryState, serverState, 'id').map(e => e.id);
+    const changedElements = _.differenceWith(commonElements, repositoryState, _.isEqual).map(e => e.id);
+
+    // Logger messages
+    logger.info('[METADATA] ' + type.config.name + ' Common: ' + commonElements.length + ' elements');
+    logger.info('[METADATA] ' + type.config.name + ' Added: ' + addedElements);
+    logger.info('[METADATA] ' + type.config.name + ' Deleted: ' + deletedElements);
+    logger.info('[METADATA] ' + type.config.name + ' Changed: ' + changedElements);
+
+    // Update local repository lastUpdated dates
+    fs.writeJsonSync(configPath, serverState, {spaces: 4});
+
+    // Query server for added elements
+    await this.fetchModel(type.config, addedElements, (response) => {
+        this.remoteServerAction('CREATE', type.config.name, response);
+        if (storeInRepository) response[type.config.name].forEach(object => {
+            this.writeToDisk(object, {...type.config, displayName: type.model.displayName});
+        });
+    });
+
+    // Query server for deleted elements
+    for (const deletedElement of deletedElements) {
+        this.remoteServerAction('DELETE', type.config.name, deletedElement);
+        if (storeInRepository) {
+            const files = find.fileSync(new RegExp(deletedElement + '.json'), this.workingDir.name);
+            if (files.length === 0) logger.error('[IO] Element ' + deletedElement + ' not found in disk.');
+            files.forEach(file => fs.removeSync(file));
+        }
+    }
+
+    // Query server for changed elements
+    await this.fetchModel(type.config, changedElements, (response) => {
+        this.remoteServerAction('UPDATE', type.config.name, response);
+        if (storeInRepository) response[type.config.name].forEach(object => {
+            this.writeToDisk(object, {...type.config, displayName: type.model.displayName});
+        });
+    });
 };
 
 Extractor.prototype.fetchModel = async function (config, ids, callback) {
