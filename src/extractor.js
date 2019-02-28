@@ -12,8 +12,8 @@ import find from "find";
 import _ from "lodash";
 
 log4js.configure({
-    appenders: { debug: { type: 'file', filename: 'debug.log' } },
-    categories: { default: { appenders: ['debug'], level: 'debug' } }
+    appenders: {debug: {type: 'file', filename: 'debug.log'}},
+    categories: {default: {appenders: ['debug'], level: 'debug'}}
 });
 const logger = log4js.getLogger();
 logger.level = 'trace';
@@ -69,7 +69,7 @@ Extractor.prototype.updateRepo = async function () {
             // Get local repository lastUpdated dates
             const configPath = this.workingDir.name + path.sep + '.updater' + path.sep + type.config.name + '.json';
             fs.ensureFileSync(configPath);
-            const repositoryState = fs.readJsonSync(configPath, { throws: false }) || [];
+            const repositoryState = fs.readJsonSync(configPath, {throws: false}) || [];
 
             // Query the API for server lastUpdated dates
             const modelElements = await type.model.list({
@@ -91,28 +91,29 @@ Extractor.prototype.updateRepo = async function () {
             logger.info('[METADATA] ' + type.config.name + ' Changed: ' + changedElements);
 
             // Update local repository lastUpdated dates
-            fs.writeJsonSync(configPath, serverState, { spaces: 4 });
+            fs.writeJsonSync(configPath, serverState, {spaces: 4});
 
             // Query server for added elements
             await this.fetchModel(type.config, addedElements, (response) => {
-               if (response[type.config.name]) response[type.config.name].forEach(object => {
+                if (response[type.config.name]) response[type.config.name].forEach(object => {
                     this.writeToDisk(object, {...type.config, displayName: type.model.displayName});
-                    // TODO: Add a POST request to create the new element in the destination servers
+                    this.remoteServerAction('POST', type.config.name, object);
                 });
             });
 
             // Query server for deleted elements
             for (const deletedElement of deletedElements) {
-                const files = find.fileSync(deletedElement + '\.json$', this.workingDir.name);
+                const files = find.fileSync(new RegExp(deletedElement + '.json'), this.workingDir.name);
+                if (files.length === 0) logger.error('[IO] Element ' + deletedElement + ' not found in disk.');
                 files.forEach(file => fs.removeSync(file));
-                // TODO: Add a DELETE request to remove the element in the destination servers
+                this.remoteServerAction('DELETE', type.config.name, deletedElement);
             }
 
             // Query server for changed elements
             await this.fetchModel(type.config, changedElements, (response) => {
                 if (response[type.config.name]) response[type.config.name].forEach(object => {
                     this.writeToDisk(object, {...type.config, displayName: type.model.displayName});
-                    // TODO: Add a PUT request to create the new element in the destination servers
+                    this.remoteServerAction('PUT', type.config.name, object);
                 });
             });
         }
@@ -138,7 +139,6 @@ Extractor.prototype.updateRepo = async function () {
 };
 
 Extractor.prototype.fetchModel = async function (config, ids, callback) {
-    logger.info('fetchModel: ' + config.name);
     let promises = [];
     for (let i = 0; i < ids.length; i += 100) {
         let requestPromise = axios.get(this.d2.Api.getApi().baseUrl +
@@ -162,7 +162,6 @@ Extractor.prototype.writeToDisk = function (json, config) {
     if (json.name !== undefined) fileName += cleanName(json.name) + '-';
     if (json.id !== undefined) fileName += json.id;
     fileName += '.json';
-    logger.debug('writeToDisk: ' + fileName);
     fs.outputJson(fileName, json, {spaces: 4});
     return fileName;
 };
@@ -170,3 +169,7 @@ Extractor.prototype.writeToDisk = function (json, config) {
 function cleanName(string) {
     return string.replace(/[/\\?%*:|"<>\r\n\t]/g, '');
 }
+
+Extractor.prototype.remoteServerAction = async function (action, type, object) {
+
+};
