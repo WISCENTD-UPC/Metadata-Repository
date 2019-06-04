@@ -2,16 +2,17 @@ import fs from "fs-extra";
 import vorpal from "vorpal";
 import ProgressBar from "progress";
 
-import {Extractor} from "./src/extractor";
+import { Extractor } from "./logic/extractor";
 
-let app = vorpal();
+let index = vorpal();
 
-app.command('update <rule>', 'Build and update a given rule', null)
-    .action(async function (args, callback) {
+index
+    .command("update <rule>", "Build and update a given rule", null)
+    .action(async function(args, callback) {
         let bar = newProgressBar();
 
-        fs.ensureFileSync('./config.json');
-        let config = fs.readJsonSync('./config.json');
+        fs.ensureFileSync("./config.json");
+        let config = fs.readJsonSync("./config.json");
         let rule = config.rules.find(e => e.name === args.rule);
         if (rule !== undefined) {
             let extractor = new Extractor(bar);
@@ -21,11 +22,11 @@ app.command('update <rule>', 'Build and update a given rule', null)
         callback();
     });
 
-app.parse(process.argv);
+index.parse(process.argv);
 
 function newProgressBar() {
-    return new ProgressBar('Fetching [:bar] :percent :name', {
+    return new ProgressBar("Fetching [:bar] :percent :name", {
         width: 40,
-        total: 100
+        total: 100,
     });
 }
